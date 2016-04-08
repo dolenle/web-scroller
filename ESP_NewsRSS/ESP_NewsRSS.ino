@@ -53,6 +53,9 @@ void loop() {
     static int i;
     if(now-lastMillis > 10000) {
       Serial.println(headlines[i]);
+//      Serial1.write(1);
+//      Serial1.print(16);
+//      Serial1.print(14);
       Serial1.println(headlines[i++]);
       lastMillis=now;
       if(i>=loaded) i=0;
