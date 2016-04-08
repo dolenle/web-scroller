@@ -1,64 +1,73 @@
 /**
- * StreamHTTPClient.ino
- *
- *  Created on: 24.05.2015
- *
+ * ESP8266 RSS Feed
  */
 
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
 #include <ESP8266HTTPClient.h>
+#include <ESP8266WebServer.h>
 
-char headlines[20][128];
-int line, loaded;
-unsigned long lastMillis;
-unsigned long lastUpdate=-600000;
+#define MAX_FEEDS 5
+#define MAX_LINES 20
+#define RSS_INTERVAL 600000
+#define TIME_SET_INTERVAL 3600000
+#define DISPLAY_INTERVAL 10000
+
+char headlines[MAX_LINES][128];
+int line;
+unsigned long lastDisp;
+unsigned long lastUpdate = -RSS_INTERVAL;
+unsigned long lastTimeSet = -TIME_SET_INTERVAL;
 char* monthTable PROGMEM = "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec";
+
+uint8_t numFeeds = 2;
+char feedURLs[MAX_FEEDS][96] = {
+  "http://www.newslookup.com/rss/wires/newslookup-wires.rss",
+  "http://rss.accuweather.com/rss/liveweather_rss.asp?locCode=10003"
+};
+
+uint8_t feedSkip[MAX_FEEDS] = {1, 2};
+uint8_t feedLines[MAX_FEEDS] = {10, 1};
+
+ESP8266WebServer server(80);
 
 void setup() {
   Serial.begin(115200);
   Serial1.begin(115200);
   Serial.println();
-  Serial.println();
-  Serial.println();
-  for (uint8_t t = 4; t > 0; t--) {
-    Serial.printf("[SETUP] WAIT %d...\n", t);
-    Serial.flush();
-    delay(1000);
-  }
+  
   WiFi.begin("esports-league", "cuesports");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println(WiFi.localIP());
+  server.on("/", pageHandler);
+  server.on("/msg", msgHandler);
+  server.on("/feed", feedHandler);
+  server.on("/time", updateTime);
+  server.on("/rss", refreshHandler);
+  server.begin();
 }
 
 void loop() {
+  server.handleClient();
   unsigned long now=millis();
-  if(now-lastUpdate > 600000 && WiFi.status() == WL_CONNECTED) {
-    line = 0;
-//    loaded = loadFeed("http://feeds.reuters.com/reuters/technologyNews?format=xml",2, 10);
-    loaded = loadFeed("http://www.newslookup.com/rss/wires/newslookup-wires.rss", 1, 10);
-    loaded += loadFeed("http://rss.accuweather.com/rss/liveweather_rss.asp?locCode=10003", 1, 2);
-    Serial.print(loaded);
-    Serial.println(" headlines loaded");
-    getTime();
+  if(now-lastUpdate > RSS_INTERVAL) {
+    updateFeeds();
+    loadMsg();
     lastUpdate = now;
+  } else if(now-lastTimeSet > TIME_SET_INTERVAL) {
+    updateTime();
+    lastTimeSet = now;
+    Serial.println("TimeSet");
   } else {
-    static bool printed;
-    if(!printed) {
-      for (int i = 0; i < loaded; i++) {
-        Serial.print(i);
-        Serial.print(' ');
-        Serial.println(headlines[i]);
-      }
-    printed = true;
-    }
     static int i;
-    if(now-lastMillis > 10000) {
+    if(now-lastDisp > DISPLAY_INTERVAL) {
       Serial.println(headlines[i]);
-//      Serial1.write(1);
-//      Serial1.print(16);
-//      Serial1.print(14);
       Serial1.println(headlines[i++]);
-      lastMillis=now;
-      if(i>=loaded) i=0;
+      lastDisp=now;
+      if(i>=line) i=0;
     }
   }
 }
@@ -107,7 +116,6 @@ int loadFeed(char* url, int skip, int maxLines) {
             if(ind < c - 7) {
               src = ind + 7;
             } else { //at eol
-              Serial.println("eol");
               src=7-(c-ind);
               continue;
             }
@@ -117,6 +125,7 @@ int loadFeed(char* url, int skip, int maxLines) {
           for (int i = src; i < c; i++) {
             if (buff[i] != '<') {
               headlines[line][dest++] = buff[i]; //copy char
+              if(buff[i] == '\n') dest--; //skip newlines
               if (dest > 255) {
                 Serial.println("overflow");
                 headlines[line][255] = 0;
@@ -136,7 +145,7 @@ int loadFeed(char* url, int skip, int maxLines) {
             }
           }
         }
-        if (line >= sizeof(headlines) || count >= maxLines) {
+        if (line > MAX_LINES || count >= maxLines) {
           break;
         }
       }
@@ -146,25 +155,26 @@ int loadFeed(char* url, int skip, int maxLines) {
     Serial.println("HTTP close");
   
   } else {
-    Serial.printf("HTTP ERROR %s\n", http.errorToString(httpCode).c_str());
+    Serial.printf("HTTP ERROR %d\n", httpCode);
   }
   http.end();
   fixCharRef("&apos;", '\'');
   fixCharRef("&amp;", '&');
   fixCharRef("&quot;", '"');
+  fixCharRef("\xe2\x80\x99", '\'');
   return count;
 }
 
-void getTime() {
+void updateTime() {
   WiFiClient client;
-  while (!!!client.connect("google.com", 80)) {
-    Serial.println("connection failed, retrying...");
+  while(!client.connect("google.com", 80)) {
+    Serial.println("google connect error");
   }
   client.print("HEAD / HTTP/1.1\r\n\r\n");
-  while(!!!client.available()) {
+  while(!client.available()) {
      yield();
   }
-  while(client.available()){ 
+  while(client.available()) { 
     if (client.read() == 't' && client.read() == 'e' && client.read() == ':') {
       client.read();
       char dateStr[30];
@@ -181,5 +191,81 @@ void getTime() {
       client.stop();
     }
   }
+}
+
+void loadMsg() {
+  Serial.println("loadMsg");
+  HTTPClient http;
+  http.begin("http:\/\/dolenle.com/led/getMsg.php?key=URl33tHAXORlol4lyef");
+  int httpCode = http.GET();
+  if(httpCode == HTTP_CODE_OK && line < MAX_LINES) {
+    String payload = http.getString();
+    Serial.println(payload);
+    payload.substring(2).toCharArray(headlines[line], payload.length());
+  } else {
+    Serial.println("Error");
+  }
+  http.end();
+}
+
+int updateFeeds() {
+  line = 0;
+  for(int i=0; i<numFeeds && line<MAX_LINES; i++) {
+    loadFeed(feedURLs[i], feedSkip[i], feedLines[i]);
+  }
+  Serial.print(line);
+  Serial.println(" titles loaded:");
+  for (int i = 0; i < line; i++) {
+    Serial.print(i);
+    Serial.print(' ');
+    Serial.println(headlines[i]);
+  }
+  Serial.println();
+  return line;
+}
+
+void pageHandler() {
+  String content = "<html><body><h1>web-scroller</h1><form action='/msg' method='POST'>Force Msg:<input type='text' name='msg'> <input type='submit'></form><form action='/feed' method='POST'>RSS Feeds:<br>";
+  int i;
+  for(i=0; (numFeeds<MAX_FEEDS && i<=numFeeds) || (numFeeds==MAX_FEEDS && i<numFeeds); i++) {
+    content += "URL:<input type='text' name='url"+String(i)+"' size='80' value='";
+    content += feedURLs[i];
+    content += "'> Skip:<input type='text' name='skip"+String(i)+"' size='3' value='"+String(feedSkip[i])+"'> Max:<input type='text' name='max"+String(i)+"' size='3' value='"+String(feedLines[i])+"'><br>";
+  }
+  content += "<input type='submit'></form><a href='/time'>Set Clock</a> <a href='/rss'>Update RSS</a></body></html>";
+  server.send(200, "text/html", content);
+}
+
+void msgHandler() {
+  if (server.hasArg("msg")){
+    Serial1.println(server.arg("msg"));
+  }
+  server.sendContent("HTTP/1.1 301 OK\r\nLocation: /\r\nCache-Control: no-cache\r\n\r\n");
+}
+
+void feedHandler() {
+  char urlID[5]="url", skipID[6]="skip", maxID[5]="max";
+  uint8_t i;
+  for(i=0; i<MAX_FEEDS; i++) {
+    strcpy(urlID+3, String(i).c_str());
+    strcpy(skipID+4, String(i).c_str());
+    strcpy(maxID+3, String(i).c_str());
+    if(server.arg(urlID).length() > 1) {
+      server.arg(urlID).toCharArray(feedURLs[i], sizeof(feedURLs[0]));
+      feedSkip[i] = server.arg(skipID).toInt();
+      feedLines[i] = server.arg(maxID).toInt();
+    } else {
+      feedSkip[i] = feedLines[i] = feedURLs[i][0] = 0;
+      break;
+    }
+  }
+  numFeeds = i;
+  server.sendContent("HTTP/1.1 301 OK\r\nLocation: /\r\nCache-Control: no-cache\r\n\r\n");
+}
+
+void refreshHandler() {
+  String num = String(updateFeeds());
+  num.concat(" titles loaded");
+  server.send(200, "text/html", num);
 }
 

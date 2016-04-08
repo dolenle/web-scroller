@@ -11,14 +11,13 @@
 
 uint8_t degC[] = { 6, 3, 3, 56, 68, 68, 68 };
 uint8_t degF[] = { 6, 3, 3, 124, 20, 20, 4 };
-uint8_t heart[] = {5, 28, 62, 124, 62, 28};
+uint8_t colon[] = {2, 102, 102};
 uint8_t mode = 0;
 uint8_t msgIndex = 0;
 uint8_t msgCount = 1;
 char tm[3] = "AM";
 char monthBuff[10];
 unsigned long timer = 1357041600;
-#define DEFAULT_TIME 1357041600 // Jan 1 2013 
 
 // Parola definitions
 #define	MAX_DEVICES	12
@@ -54,7 +53,7 @@ textEffect_t	effectList[] =
 	SCAN_VERT,
 	SCROLL_DOWN_LEFT,
 	WIPE_CURSOR,
-	DISSOLVE,
+	DISSOLVE, //15
 	OPENING,
 	CLOSING_CURSOR,
 	SCROLL_DOWN_RIGHT,
@@ -88,24 +87,16 @@ void readSerial(void)
         i--;
       }
     }
-    setTime(dates[3],dates[4],dates[5],dates[0],dates[1],dates[2]);
-    RTC.set(now());
-    RTC.set(RTC.get()-14400); //GMT->EST
-    setTime(RTC.get());
+    tmElements_t data = {dates[5],dates[4],dates[3],0,dates[0],dates[1],dates[2]-1970};
+    setTime(makeTime(data)-14400); //GMT->EST
     Serial.println(F("Clock Set"));
   }
   else
   {
-    if(nextChar == SET_EFFECT_CHAR) {
-      enterEffect = effectList[Serial.parseInt()];
-      exitEffect = effectList[Serial.parseInt()];
-    } else {
-      enterEffect = exitEffect = SCROLL_DOWN;
-    }
-    while(nextChar >= 0 && (nextChar != '\n')) {
+    while(nextChar >= 0 && nextChar != MSG_SEPARATOR) {
       Serial.println("read line");
       newMessage[arrIndex][0] = nextChar;
-      unsigned int bytes = Serial.readBytesUntil('\r', newMessage[arrIndex]+1, sizeof(newMessage[0])-1);
+      unsigned int bytes = Serial.readBytesUntil(LINE_SEPARATOR, newMessage[arrIndex]+1, sizeof(newMessage[0])-1);
       newMessage[arrIndex++][bytes+1] = 0;
       nextChar = Serial.read();
       if(arrIndex >= MAX_LINES) {
@@ -124,9 +115,10 @@ void setup()
   Serial.begin(115200);
   Serial.println("[Initializing]");
   P.begin();
+  P.addChar(':', colon);
   P.displayClear();
   P.displaySuspend(false);
-//  P.addChar('\007', degF);
+  P.setIntensity(0);
   P.displayText(curMessage, CENTER, INITIAL_SPEED, CLK_PAUSE, enterEffect, exitEffect);
   
   setSyncProvider(RTC.get);
@@ -181,7 +173,7 @@ void loop()
       } else if(msgCount>1)
       {
         P.setSpeed(0);
-        P.setTextEffect(SCROLL_DOWN, SCROLL_DOWN);
+        P.setTextEffect(enterEffect, exitEffect);
         P.setPause(MSG_PAUSE);
         strcpy(curMessage, newMessage[msgIndex]);
         if(strlen(curMessage) > 16)
@@ -195,27 +187,6 @@ void loop()
       }
       P.displayReset();
   }
-}
-
-size_t mon2str(uint8_t mon, char *psz)
-{
-  static const __FlashStringHelper* months[] = 
-  { 
-    F("January"),
-    F("February"),
-    F("March"),
-    F("April"),
-    F("May"),
-    F("June"),
-    F("July"),
-    F("August"),
-    F("September"),
-    F("October"),
-    F("November"),
-    F("December")
-  };
-  strncpy_P(psz, (const char PROGMEM *) months[mon-1], 10);
-  return strlen_P((const char PROGMEM *) months[mon-1]);
 }
 
 int get12hr()
