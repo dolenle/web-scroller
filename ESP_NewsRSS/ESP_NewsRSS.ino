@@ -12,15 +12,15 @@
 #define MAX_LINES 25
 #define MAX_LENGTH 192
 #define URL_LENGTH 96
-#define RSS_INTERVAL 600000
-#define CLOCK_INTERVAL 3600000
-#define DISPLAY_INTERVAL 12000
 
 char headlines[MAX_LINES][MAX_LENGTH];
 int line;
+unsigned long rss_interval = 600000;
+unsigned long clock_interval = 3600000;
+unsigned long disp_interval = 12000;
 unsigned long lastDisp;
-unsigned long lastUpdate = -RSS_INTERVAL;
-unsigned long lastTimeSet = -CLOCK_INTERVAL;
+unsigned long lastUpdate = -rss_interval;
+unsigned long lastTimeSet = -clock_interval;
 char* monthTable PROGMEM = "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec";
 char* redirHeader PROGMEM = "HTTP/1.1 301 OK\r\nLocation: /\r\nCache-Control: no-cache\r\n\r\n";
 
@@ -53,6 +53,7 @@ void setup() {
   server.on("/reset", resetHandler);
   server.on("/wifi", wifiHandler);
   server.on("/get", loadMsg);
+  server.on("/int", timingHandler);
   server.begin();
   
   while (WiFi.status() != WL_CONNECTED) {
@@ -67,17 +68,17 @@ void setup() {
 void loop() {
   server.handleClient();
   unsigned long now=millis();
-  if(now-lastUpdate > RSS_INTERVAL) {
+  if(now-lastUpdate > rss_interval) {
     updateFeeds();
     loadMsg();
     lastUpdate = now;
-  } else if(now-lastTimeSet > CLOCK_INTERVAL) {
+  } else if(now-lastTimeSet > clock_interval) {
     updateTime();
     lastTimeSet = now;
     Serial.println("TimeSet");
   } else {
     static int i;
-    if(now-lastDisp > DISPLAY_INTERVAL) {
+    if(now-lastDisp > disp_interval) {
       Serial.println(headlines[i]);
       Serial1.println(headlines[i++]);
       lastDisp=now;
@@ -178,6 +179,7 @@ int loadFeed(char* url, int skip, int maxLines) {
   fixCharRef("&amp;", '&');
   fixCharRef("&quot;", '"');
   fixCharRef("\xe2\x80\x99", '\'');
+  fixCharRef("\r\n", '\r');
   return count;
 }
 
@@ -218,11 +220,12 @@ void loadMsg() {
   if(httpCode == HTTP_CODE_OK && line < MAX_LINES) {
     String payload = http.getString();
     Serial.println(payload);
-    payload.toCharArray(headlines[line++], payload.length());
+    payload.toCharArray(headlines[line++], sizeof(headlines[0]));
   } else {
     Serial.println("Error");
   }
   http.end();
+  fixCharRef("\r\n", '\r');
   server.sendContent(redirHeader);
 }
 
@@ -244,8 +247,7 @@ int updateFeeds() {
 
 //Main server page
 void pageHandler() {
-  String content = "<html><body><h1>ESP8266 web-scroller</h1><form action='/msg' method='POST'>Force Msg:<input type='text' name='msg' size=90> <input type='submit'></form>WiFi Settings:<form action='/wifi' method='POST'>SSID:<input type='text' name='st_ssid' value='";
-  content += String(st_ssid)+"'> PASS:<input type='password' name='st_pass' placeholder='*****'> AP SSID:<input type='text' name='ap_ssid' value='"+String(ap_ssid)+"'> <input type='submit'></form><form action='/feed' method='POST'>Loaded: (";
+  String content = "<html><body><h1>ESP8266 web-scroller</h1><form action='/msg' method='POST'>Write Msg:<input name='msg' size=90> <input type='submit'></form>Loaded: (";
   content += (millis() - lastUpdate)/1000;
   content += " sec ago)<ol>";
   int i;
@@ -254,13 +256,13 @@ void pageHandler() {
     content += headlines[i];
     content += "</li>";
   }
-  content += "</ol>Feeds:<br>";
+  content += "</ol>Feeds:<form action='/feed' method='POST'>";
   for(i = 0; (numFeeds < MAX_FEEDS && i <= numFeeds) || (numFeeds == MAX_FEEDS && i < numFeeds); i++) {
-    content += "URL:<input type='text' name='url"+String(i)+"' size=80 value='";
+    content += "URL:<input name='url"+String(i)+"' size=80 value='";
     content += feedURLs[i];
-    content += "'> Skip:<input type='text' name='skip"+String(i)+"' size=3 value='"+String(feedSkip[i])+"'> Max:<input type='text' name='max"+String(i)+"' size=3 value='"+String(feedLines[i])+"'><br>";
+    content += "'> Skip:<input name='skip"+String(i)+"' size=3 value='"+String(feedSkip[i])+"'> Max:<input name='max"+String(i)+"' size=3 value='"+String(feedLines[i])+"'><br>";
   }
-  content += "<input type='submit'></form><a href='/clock'>Update Clock</a><br><a href='/reset'>Reset Display</a><br><a href='/get'>Get Message</a></body></html>";
+  content += "<input type='submit'></form>WiFi Settings:<form action='/wifi' method='POST'>SSID:<input name='st_ssid' value='"+String(st_ssid)+"'> PASS:<input type='password' name='st_pass' placeholder='*****'> AP SSID:<input name='ap_ssid' value='"+String(ap_ssid)+"'> <input type='submit'></form>Intervals:<form action='/int'>Feed:<input name='rss' size=9 value="+String(rss_interval)+"> Clock:<input name='time' size=9 value="+String(clock_interval)+"> Display:<input name='disp' size=9 value="+String(disp_interval)+"><input type='submit'></form><a href='/clock'>Update Clock</a><br><a href='/reset'>Reset Display</a><br><a href='/get'>Get Message</a></body></html>";
   server.send(200, "text/html", content);
 }
 
@@ -321,5 +323,15 @@ void wifiHandler() {
   } else {
     Serial.println("WifiErr");
   }
+}
+
+//Update Timing Settings
+void timingHandler() {
+  if (server.hasArg("rss") && server.hasArg("time") && server.hasArg("disp")) {
+    rss_interval = server.arg("rss").toInt();
+    clock_interval = server.arg("time").toInt();
+    disp_interval = server.arg("disp").toInt();
+  }
+  server.sendContent(redirHeader);
 }
 

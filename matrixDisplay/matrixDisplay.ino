@@ -2,6 +2,7 @@
  * Parola-MAX7219 Serial Message Display with Clock
  * Dolen Le
  */
+ 
 #include <MD_Parola.h>
 #include <MD_MAX72xx.h>
 #include <Time.h>  
@@ -50,6 +51,7 @@ textEffect_t  effectList[] =
   SCROLL_DOWN_RIGHT,
   SCROLL_RIGHT,
   SCROLL_DOWN,
+  FADE
 };
 
 MD_Parola P = MD_Parola(CS_PIN, MAX_DEVICES); //using SPI
@@ -63,7 +65,7 @@ unsigned long timer = 1357041600;
 #define	MAX_LENGTH 192
 #define	MAX_LINES 3
 char curMessage[MAX_LENGTH]; //display buffer
-char newMessage[MAX_LINES][MAX_LENGTH] = {"OK"}; //message buffer
+char newMessage[MAX_LINES][MAX_LENGTH]; //message buffer
 uint8_t mode = 0;
 uint8_t lineInd = 0;
 uint8_t lineCount = 1;
@@ -71,11 +73,11 @@ uint8_t lineCount = 1;
 void readSerial(void) {
   uint8_t arrIndex = 0;
   char nextChar = Serial.read();
-  if(nextChar == SET_RTC_CHAR) {
+  if(nextChar == SET_RTC_CHAR) { //Set time
     int dates[6];
     char buf[5];
     buf[4]=0;
-    for(uint8_t i=0; i<6; i++) {
+    for(uint8_t i = 0; i < 6; i++) { //parse time into array
       uint8_t bytes = Serial.readBytesUntil(0,buf,4);
       if(bytes) {
         buf[bytes] = 0;
@@ -88,18 +90,17 @@ void readSerial(void) {
     setTime(makeTime(data)-14400); //GMT->EST
     Serial.println(F("Clock Set"));
   } else {
-    while(nextChar >= 0 && nextChar != MSG_SEPARATOR) {
+    while(nextChar != MSG_SEPARATOR) {
       newMessage[arrIndex][0] = nextChar;
       unsigned int bytes = Serial.readBytesUntil(LINE_SEPARATOR, newMessage[arrIndex]+1, sizeof(newMessage[0])-1);
       newMessage[arrIndex++][bytes+1] = 0;
-      nextChar = Serial.read();
-      if(arrIndex >= MAX_LINES) {
+      if(!Serial.readBytes(&nextChar, 1) || arrIndex >= MAX_LINES) {
         break;
       }
     }
     lineCount = arrIndex;
     Serial.print(lineCount);
-    Serial.println(" lines");
+    Serial.print(" lines - ");
     Serial.println(newMessage[0]);
   }
   while(Serial.available()) Serial.read(); //flush buffer
@@ -107,7 +108,9 @@ void readSerial(void) {
 
 void setup() {
   Serial.begin(115200);
-  Serial.println(F("[Initializing]"));
+  Serial.setTimeout(100);
+  Serial.println(F("Initializing"));
+  
   P.begin();
   P.addChar(':', colon);
   P.displayClear();
@@ -116,12 +119,12 @@ void setup() {
   P.displayText(curMessage, CENTER, INITIAL_SPEED, CLK_PAUSE, enterEffect, exitEffect);
   
   setSyncProvider(RTC.get);
-  if(timeStatus()!= timeSet) {
-     Serial.println(F("RTC ERR"));
+  if(timeStatus() != timeSet) {
+     strcpy(newMessage[0], "RTC ERR");
   } else {
-     Serial.println(F("RTC OK"));
-  }  
-  SPI.setClockDivider(SPI_CLOCK_DIV2);
+     strcpy(newMessage[0], "RTC OK");
+  }
+  SPI.setClockDivider(SPI_CLOCK_DIV2); //8MHz SPI
 }
 
 void loop() {
@@ -129,48 +132,40 @@ void loop() {
     readSerial();
   }
   if (P.displayAnimate())  {
-      if(millis() - timer > CLK_INTERVAL && lineInd == 0) {
-        switch(mode) {
-          case DISP_DATE:
-            P.setPause(CLK_PAUSE);
-            P.setSpeed(0);
-            P.setTextEffect(SCROLL_DOWN, SCROLL_DOWN);
-            sprintf(curMessage, "%s %i, %i", monthStr(month()), day(), year());
-            break;
-          case DISP_TIME: {
-            P.setIntensity(map(analogRead(A7),10,400,0,15)); //ambient brightness
-            sprintf(curMessage, "%i:%02i %s", get12hr(), minute(), ap);
-            break;
-          }
-          default:
-            strcpy(curMessage, newMessage[lineInd]);
-            if(strlen(curMessage) > 16) {
-              P.setTextEffect(SCROLL_LEFT, SCROLL_LEFT);
-              P.setSpeed(20);
-              P.setPause(0);
-            } else if(lineCount == 1) {
-              P.setPause(CLK_INTERVAL);
-            } else {
-              P.setPause(MSG_PAUSE);
-            }
-            timer = millis();
-            ++lineInd%=lineCount;
-        }
-        ++mode %= DISP_MSG+1;
-      } else if(lineCount>1) {
+    if(millis() - timer > CLK_INTERVAL && lineInd == 0) {
+      ++mode %= DISP_MSG+1;
+    }
+    switch(mode) {
+      case DISP_DATE:
+        P.setPause(CLK_PAUSE);
+        P.setSpeed(0);
+        P.setTextEffect(SCROLL_DOWN, SCROLL_DOWN);
+        sprintf(curMessage, "%s %i, %i", monthStr(month()), day(), year());
+        break;
+      case DISP_TIME: {
+        P.setIntensity(map(analogRead(A7),10,400,0,15)); //ambient brightness
+        sprintf(curMessage, "%i:%02i %s", get12hr(), minute(), ap);
+        break;
+      }
+      default:
         strcpy(curMessage, newMessage[lineInd]);
         if(strlen(curMessage) > 16) {
           P.setTextEffect(SCROLL_LEFT, SCROLL_LEFT);
           P.setSpeed(20);
           P.setPause(0);
         } else {
-          P.setSpeed(0);
           P.setTextEffect(enterEffect, exitEffect);
-          P.setPause(MSG_PAUSE);
+          P.setSpeed(10);
+          if(lineCount == 1) {
+            P.setPause(CLK_INTERVAL);
+          } else {
+            P.setPause(MSG_PAUSE);
+          }
         }
-        ++lineInd%=lineCount;
-      }
-      P.displayReset();
+        timer = millis();
+        ++lineInd %= lineCount;
+    }
+    P.displayReset();
   }
 }
 
