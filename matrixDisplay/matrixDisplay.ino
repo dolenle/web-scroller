@@ -28,31 +28,6 @@ enum modes {DISP_DATE, DISP_TIME, DISP_MSG};
 
 textEffect_t  enterEffect = SCROLL_DOWN;
 textEffect_t  exitEffect = SCROLL_DOWN;
-textEffect_t  effectList[] =
-{
-  PRINT,
-  SCAN_HORIZ,
-  SCROLL_LEFT,
-  WIPE,
-  SCROLL_UP_LEFT,
-  SCROLL_UP,
-  OPENING_CURSOR,
-  GROW_UP,
-  SCROLL_UP_RIGHT,
-  BLINDS,
-  CLOSING,
-  GROW_DOWN,
-  SCAN_VERT,
-  SCROLL_DOWN_LEFT,
-  WIPE_CURSOR,
-  DISSOLVE, //15
-  OPENING,
-  CLOSING_CURSOR,
-  SCROLL_DOWN_RIGHT,
-  SCROLL_RIGHT,
-  SCROLL_DOWN,
-  FADE
-};
 
 MD_Parola P = MD_Parola(CS_PIN, MAX_DEVICES); //using SPI
 uint8_t degC[] = { 6, 3, 3, 56, 68, 68, 68 };
@@ -71,7 +46,7 @@ uint8_t lineInd = 0;
 uint8_t lineCount = 1;
 
 void readSerial(void) {
-  uint8_t arrIndex = 0;
+  lineCount = 0;
   char nextChar = Serial.read();
   if(nextChar == SET_RTC_CHAR) { //Set time
     int dates[6];
@@ -89,16 +64,19 @@ void readSerial(void) {
     tmElements_t data = {dates[5],dates[4],dates[3],0,dates[0],dates[1],dates[2]-1970};
     setTime(makeTime(data)-14400); //GMT->EST
     Serial.println(F("Clock Set"));
-  } else {
+  } else if(nextChar == SET_EFFECT_CHAR) {
+    enterEffect = (textEffect_t) Serial.parseInt();
+    exitEffect = (textEffect_t) Serial.parseInt();
+    Serial.println("Effect set");
+  } else if(nextChar >= 0) {
     while(nextChar != MSG_SEPARATOR) {
-      newMessage[arrIndex][0] = nextChar;
-      unsigned int bytes = Serial.readBytesUntil(LINE_SEPARATOR, newMessage[arrIndex]+1, sizeof(newMessage[0])-1);
-      newMessage[arrIndex++][bytes+1] = 0;
-      if(!Serial.readBytes(&nextChar, 1) || arrIndex >= MAX_LINES) {
+      newMessage[lineCount][0] = nextChar;
+      unsigned int bytes = Serial.readBytesUntil(LINE_SEPARATOR, newMessage[lineCount]+1, sizeof(newMessage[0])-1);
+      newMessage[lineCount++][bytes+1] = 0;
+      if(!Serial.readBytes(&nextChar, 1) || lineCount >= MAX_LINES) {
         break;
       }
     }
-    lineCount = arrIndex;
     Serial.print(lineCount);
     Serial.print(" lines - ");
     Serial.println(newMessage[0]);
@@ -138,8 +116,8 @@ void loop() {
     switch(mode) {
       case DISP_DATE:
         P.setPause(CLK_PAUSE);
-        P.setSpeed(0);
-        P.setTextEffect(SCROLL_DOWN, SCROLL_DOWN);
+        P.setSpeed(2);
+        P.setTextEffect(enterEffect, exitEffect);
         sprintf(curMessage, "%s %i, %i", monthStr(month()), day(), year());
         break;
       case DISP_TIME: {
