@@ -9,38 +9,9 @@
 #include <ESP8266WebServer.h>
 
 #define MAX_FEEDS 5
-#define MAX_LINES 25
-#define MAX_LENGTH 192
+#define MAX_LINES 20
+#define MAX_LENGTH 256
 #define URL_LENGTH 96
-
-enum textEffect_t
-{
-  NO_EFFECT,    ///< Used as a place filler, executes no operation
-  PRINT,        ///< Text just appears (printed)
-  SCROLL_UP,    ///< Text scrolls up through the display
-  SCROLL_DOWN,  ///< Text scrolls down through the display
-  SCROLL_LEFT,  ///< Text scrolls right to left on the display
-  SCROLL_RIGHT, ///< Text scrolls left to right on the display
-  SLICE,        ///< Text enters and exits a slice (column) at a time from the right
-  MESH,         ///< Text enters and exits in columns moving in alternate direction (U/D)
-  FADE,         ///< Text enters and exits by fading from/to 0 and intensity setting
-  DISSOLVE,     ///< Text dissolves from one display to another
-  BLINDS,       ///< Text is replaced behind vertical blinds
-  WIPE,         ///< Text appears/disappears one column at a time, looks like it is wiped on and off
-  WIPE_CURSOR,  ///< WIPE with a light bar ahead of the change
-  SCAN_HORIZ,   ///< Scan one column at a time then appears/disappear at end
-  SCAN_VERT,    ///< Scan one row at a time then appears/disappear at end
-  OPENING,      ///< Appear and disappear from the center of the display, towards the ends
-  OPENING_CURSOR, ///< OPENING with light bars ahead of the change
-  CLOSING_NOCURSOR,///< Appear and disappear from the ends of the display, towards the middle
-  CLOSING_CURSOR, ///< CLOSING with light bars ahead of the change
-  SCROLL_UP_LEFT,   ///< Text moves in/out in a diagonal path up and left (North East)
-  SCROLL_UP_RIGHT,  ///< Text moves in/out in a diagonal path up and right (North West)
-  SCROLL_DOWN_LEFT, ///< Text moves in/out in a diagonal path down and left (South East)
-  SCROLL_DOWN_RIGHT,///< Text moves in/out in a diagonal path down and right (North West)
-  GROW_UP,      ///< Text grows from the bottom up and shrinks from the top down 
-  GROW_DOWN,    ///< Text grows from the top down and and shrinks from the bottom up
-};
 
 char headlines[MAX_LINES][MAX_LENGTH];
 int line;
@@ -300,27 +271,17 @@ void loadMTAServiceStatus() {
     char* intro = "Subway Status";
     int index = strlen(intro); //next free index
     strcpy(headlines[line], intro);
-    headlines[line][index++] = '\r'; //line separator
     while(client.available() && client.findUntil("<name>", "</subway>")) {
+      headlines[line][index++] = '\r'; //line separator
       String txt = client.readStringUntil('<');
-      headlines[line][index++] = '(';
       txt.toCharArray(headlines[line]+index, sizeof(headlines)-index);
       index += txt.length();
-      headlines[line][index++] = ')';
-      strcpy(headlines[line]+index, " - ");
-      index += 3;
+      headlines[line][index++] = '-';
       client.find("<status>");
       txt = client.readStringUntil('<');
       txt.toLowerCase();
       txt.toCharArray(headlines[line]+index, sizeof(headlines)-index);
       index += txt.length();
-      strcpy(headlines[line]+index, "    ");
-      index += 4;
-      if(index > 120 && !secondLine) { //nearing end
-        line++;
-        index = 0;
-        secondLine = true;
-      }
     }
     line++;
     Serial.println("Done");
@@ -349,7 +310,7 @@ void pageHandler() {
   content += effectSelect;
   content += " Exit: <select name='exit'>";
   content += effectSelect;
-  content += "<input type=submit></form>Loaded:<ol>";
+  content += " Speed: <input type=text size=4 name='spd' value=2><input type=submit></form>Loaded:<ol>";
   int i;
   for(int i = 0; i < line; i++) {
     content += "<li>";
@@ -433,12 +394,9 @@ void timingHandler() {
 
 //Change text animation
 void effectHandler() {
-  if(server.hasArg("enter") && server.hasArg("exit")) {
+  if(server.hasArg("enter") && server.hasArg("exit") && server.hasArg("spd")) {
     Serial1.write(1);
-    Serial1.print(server.arg("enter"));
-    Serial1.write(' ');
-    Serial1.print(server.arg("exit"));
-    Serial1.write(' ');
+    Serial1.print(server.arg("enter") + ' ' + server.arg("exit") + ' ' + server.arg("spd") + ' ');
   }
   server.sendContent(redirHeader);
 }

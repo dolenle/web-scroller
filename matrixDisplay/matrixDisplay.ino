@@ -28,6 +28,7 @@ enum modes {DISP_DATE, DISP_TIME, DISP_MSG};
 
 textEffect_t  enterEffect = SCROLL_DOWN;
 textEffect_t  exitEffect = SCROLL_DOWN;
+uint8_t effectSpeed = 2;
 
 MD_Parola P = MD_Parola(CS_PIN, MAX_DEVICES); //using SPI
 uint8_t degC[] = { 6, 3, 3, 56, 68, 68, 68 };
@@ -39,14 +40,16 @@ unsigned long timer = 1357041600;
 //Message buffers
 #define	MAX_LENGTH 192
 #define	MAX_LINES 3
+#define MAX_MSG MAX_LENGTH*MAX_LINES
+#define DISPLAY_WIDTH 16 //characters which can fit
 char curMessage[MAX_LENGTH]; //display buffer
-char newMessage[MAX_LINES][MAX_LENGTH]; //message buffer
+char newMessage[MAX_MSG]; //message buffer
+char* nextLine = newMessage;
 uint8_t mode = 0;
 uint8_t lineInd = 0;
 uint8_t lineCount = 1;
 
 void readSerial(void) {
-  lineCount = 0;
   char nextChar = Serial.read();
   if(nextChar == SET_RTC_CHAR) { //Set time
     int dates[6];
@@ -67,19 +70,25 @@ void readSerial(void) {
   } else if(nextChar == SET_EFFECT_CHAR) {
     enterEffect = (textEffect_t) Serial.parseInt();
     exitEffect = (textEffect_t) Serial.parseInt();
+    effectSpeed = (uint8_t) Serial.parseInt();
     Serial.println("Effect set");
-  } else if(nextChar >= 0) {
+  } else if(nextChar >= 0) { //incoming message
+    lineCount = 0;
+    char* msgPtr = newMessage;
     while(nextChar != MSG_SEPARATOR) {
-      newMessage[lineCount][0] = nextChar;
-      unsigned int bytes = Serial.readBytesUntil(LINE_SEPARATOR, newMessage[lineCount]+1, sizeof(newMessage[0])-1);
-      newMessage[lineCount++][bytes+1] = 0;
-      if(!Serial.readBytes(&nextChar, 1) || lineCount >= MAX_LINES) {
+      unsigned int space = newMessage+MAX_MSG-msgPtr;
+      *msgPtr++ = nextChar;
+      unsigned int bytes = Serial.readBytesUntil(LINE_SEPARATOR, msgPtr, (space>MAX_LENGTH-1 ? MAX_LENGTH-1 : space));
+      *(msgPtr+=bytes) = 0; //terminator
+      lineCount++;
+      msgPtr++;
+      if(!Serial.readBytes(&nextChar, 1) || msgPtr > newMessage+MAX_MSG) {
         break;
       }
     }
     Serial.print(lineCount);
     Serial.print(" lines - ");
-    Serial.println(newMessage[0]);
+    Serial.println(newMessage);
   }
   while(Serial.available()) Serial.read(); //flush buffer
 }
@@ -98,9 +107,9 @@ void setup() {
   
   setSyncProvider(RTC.get);
   if(timeStatus() != timeSet) {
-     strcpy(newMessage[0], "RTC ERR");
+     strcpy(newMessage, "RTC ERR");
   } else {
-     strcpy(newMessage[0], "RTC OK");
+     strcpy(newMessage, "RTC OK");
   }
   SPI.setClockDivider(SPI_CLOCK_DIV2); //8MHz SPI
 }
@@ -116,7 +125,7 @@ void loop() {
     switch(mode) {
       case DISP_DATE:
         P.setPause(CLK_PAUSE);
-        P.setSpeed(2);
+        P.setSpeed(effectSpeed);
         P.setTextEffect(enterEffect, exitEffect);
         sprintf(curMessage, "%s %i, %i", monthStr(month()), day(), year());
         break;
@@ -126,22 +135,26 @@ void loop() {
         break;
       }
       default:
-        strcpy(curMessage, newMessage[lineInd]);
-        if(strlen(curMessage) > 16) {
+        strncpy(curMessage, nextLine, MAX_LENGTH);
+        if(strlen(curMessage) > DISPLAY_WIDTH) {
           P.setTextEffect(SCROLL_LEFT, SCROLL_LEFT);
           P.setSpeed(20);
           P.setPause(0);
         } else {
           P.setTextEffect(enterEffect, exitEffect);
-          P.setSpeed(10);
+          P.setSpeed(effectSpeed);
           if(lineCount == 1) {
             P.setPause(CLK_INTERVAL);
           } else {
             P.setPause(MSG_PAUSE);
           }
         }
-        timer = millis();
-        ++lineInd %= lineCount;
+        if(++lineInd >= lineCount) {
+          lineInd = 0;
+          nextLine = newMessage;
+        } else {
+          nextLine += strlen(nextLine)+1;
+        }
     }
     P.displayReset();
   }
