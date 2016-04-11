@@ -9,8 +9,8 @@
 #include <ESP8266WebServer.h>
 
 #define MAX_FEEDS 5
-#define MAX_LINES 20
-#define MAX_LENGTH 256
+#define MAX_LINES 25
+#define MAX_LENGTH 192
 #define URL_LENGTH 96
 
 char headlines[MAX_LINES][MAX_LENGTH];
@@ -110,73 +110,22 @@ void fixCharRef(char* reference, char sub) {
 
 //load up to limit titles from the feed, skipping at beginning
 int loadFeed(char* url, int skip, int limit) {
-  int src = 0; //source index (from buff)
-  int dest = 0; //destination index
-  bool copying = false;
   int count = 0;
-  
   HTTPClient http;
   http.begin(url);
   Serial.print("Load ");
   Serial.println(url);
   int httpCode = http.GET();
   if(httpCode == HTTP_CODE_OK) {
-    int len = http.getSize();
-    uint8_t buff[128] = { 0 }; //buffer
     WiFiClient * stream = http.getStreamPtr();
-    while (http.connected() && (len > 0 || len == -1)) {
-      size_t size = stream->available(); //total size
-      if(size) {
-        int c = stream->readBytes(buff, ((size > sizeof(buff)) ? sizeof(buff) : size));
-        if(len > 0) {
-          len -= c;
-        }
-        if(!copying) {
-          char* find = strstr((char*) buff, "<ti");
-          int ind = find - (char*)buff;
-          if(find && skip-- <= 0) {
-            copying = true;
-            if(ind < c - 7) {
-              src = ind + 7;
-            } else { //at eol
-              src=7-(c-ind);
-              continue;
-            }
-          }
-        }
-        if(copying) {
-          for(int i = src; i < c; i++) {
-            if(buff[i] != '<') {
-              headlines[line][dest++] = buff[i]; //copy char
-              if(buff[i] == '\n') dest--; //skip newlines
-              if(dest > 255) {
-                Serial.println("overflow");
-                headlines[line][255] = 0;
-                copying = false;
-                line++;
-                dest = 0;
-                count++;
-                break;
-              }
-            } else {
-              headlines[line][dest] = 0;
-              copying = false;
-              line++;
-              dest = 0;
-              count++;
-              break;
-            }
-          }
-        }
-        if(line >= MAX_LINES || count >= limit) {
-          break;
-        }
+    while (stream->available() && stream->find("<title") && line < MAX_LINES && count < limit) {
+      if(stream->find('>') && skip-- <= 0) {
+        String title = stream->readStringUntil('<');
+        title.toCharArray(headlines[line++], sizeof(headlines[0]));
+        count++;
       }
-      delay(1);
-      src = 0;
     }
-    Serial.println("HTTP close");
-  
+    Serial.println("Done");
   } else {
     Serial.printf("HTTP error %d\n", httpCode);
   }
@@ -271,17 +220,27 @@ void loadMTAServiceStatus() {
     char* intro = "Subway Status";
     int index = strlen(intro); //next free index
     strcpy(headlines[line], intro);
+    headlines[line][index++] = '\r'; //line separator
     while(client.available() && client.findUntil("<name>", "</subway>")) {
-      headlines[line][index++] = '\r'; //line separator
       String txt = client.readStringUntil('<');
+      headlines[line][index++] = '(';
       txt.toCharArray(headlines[line]+index, sizeof(headlines)-index);
       index += txt.length();
-      headlines[line][index++] = '-';
+      headlines[line][index++] = ')';
+      strcpy(headlines[line]+index, " - ");
+      index += 3;
       client.find("<status>");
       txt = client.readStringUntil('<');
       txt.toLowerCase();
       txt.toCharArray(headlines[line]+index, sizeof(headlines)-index);
       index += txt.length();
+      strcpy(headlines[line]+index, "    ");
+      index += 4;
+      if(index > 120 && !secondLine) { //nearing end
+        line++;
+        index = 0;
+        secondLine = true;
+      }
     }
     line++;
     Serial.println("Done");
@@ -293,16 +252,16 @@ void loadMTAServiceStatus() {
 
 //Main server page
 void pageHandler() {
-  if(server.hasArg("mta")) {
-    loadMTAServiceStatus();
-  } else if(server.hasArg("clk")) {
-    updateTime();
-  } else if(server.hasArg("rst")) {
-    resetDisplay();
-  } else if(server.hasArg("get")) {
-    loadMsg();
-  }
   if(server.args()) {
+    if(server.hasArg("mta")) {
+      loadMTAServiceStatus();
+    } else if(server.hasArg("clk")) {
+      updateTime();
+    } else if(server.hasArg("rst")) {
+      resetDisplay();
+    } else if(server.hasArg("get")) {
+      loadMsg();
+    }
     server.sendContent(redirHeader);
     return;
   }
@@ -310,7 +269,7 @@ void pageHandler() {
   content += effectSelect;
   content += " Exit: <select name='exit'>";
   content += effectSelect;
-  content += " Speed: <input type=text size=4 name='spd' value=2><input type=submit></form>Loaded:<ol>";
+  content += " Speed: <input type=text size=4 name='spd' value=2> Scroll Speed: <input type=text size=4 name='scr' value=20><input type=submit></form>Loaded:<ol>";
   int i;
   for(int i = 0; i < line; i++) {
     content += "<li>";
@@ -394,9 +353,9 @@ void timingHandler() {
 
 //Change text animation
 void effectHandler() {
-  if(server.hasArg("enter") && server.hasArg("exit") && server.hasArg("spd")) {
+  if(server.hasArg("enter") && server.hasArg("exit") && server.hasArg("spd")  && server.hasArg("scr")) {
     Serial1.write(1);
-    Serial1.print(server.arg("enter") + ' ' + server.arg("exit") + ' ' + server.arg("spd") + ' ');
+    Serial1.print(server.arg("enter") + ' ' + server.arg("exit") + ' ' + server.arg("spd") + ' ' + server.arg("scr") + ' ');
   }
   server.sendContent(redirHeader);
 }

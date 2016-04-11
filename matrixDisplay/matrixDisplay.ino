@@ -10,12 +10,11 @@
 #include <DS1307RTC.h>
 #include <SPI.h>
 
-// Parola definitions
-#define  MAX_DEVICES 12
-#define CS_PIN    10
-
+#define MAX_DEVICES 12
+#define CS_PIN  10
+#define LIGHT_SENSOR A7
 #define INITIAL_SPEED 0
-#define MSG_PAUSE 1250
+#define MSG_PAUSE 1300
 #define CLK_PAUSE 1000
 #define CLK_INTERVAL 5000
 
@@ -29,20 +28,17 @@ enum modes {DISP_DATE, DISP_TIME, DISP_MSG};
 textEffect_t  enterEffect = SCROLL_DOWN;
 textEffect_t  exitEffect = SCROLL_DOWN;
 uint8_t effectSpeed = 2;
+uint8_t scrollSpeed = 20;
 
 MD_Parola P = MD_Parola(CS_PIN, MAX_DEVICES); //using SPI
-uint8_t degC[] = { 6, 3, 3, 56, 68, 68, 68 };
-uint8_t degF[] = { 6, 3, 3, 124, 20, 20, 4 };
 uint8_t colon[] = {2, 102, 102};
 char ap[3] = "AM";
-unsigned long timer = 1357041600;
+unsigned long timer = -CLK_INTERVAL;
 
 //Message buffers
-#define	MAX_LENGTH 192
-#define	MAX_LINES 3
-#define MAX_MSG MAX_LENGTH*MAX_LINES
+#define MAX_MSG 192
 #define DISPLAY_WIDTH 16 //characters which can fit
-char curMessage[MAX_LENGTH]; //display buffer
+char curMessage[MAX_MSG]; //display buffer
 char newMessage[MAX_MSG]; //message buffer
 char* nextLine = newMessage;
 uint8_t mode = 0;
@@ -71,6 +67,7 @@ void readSerial(void) {
     enterEffect = (textEffect_t) Serial.parseInt();
     exitEffect = (textEffect_t) Serial.parseInt();
     effectSpeed = (uint8_t) Serial.parseInt();
+    scrollSpeed = (uint8_t) Serial.parseInt();
     Serial.println("Effect set");
   } else if(nextChar >= 0) { //incoming message
     lineCount = 0;
@@ -78,7 +75,7 @@ void readSerial(void) {
     while(nextChar != MSG_SEPARATOR) {
       unsigned int space = newMessage+MAX_MSG-msgPtr;
       *msgPtr++ = nextChar;
-      unsigned int bytes = Serial.readBytesUntil(LINE_SEPARATOR, msgPtr, (space>MAX_LENGTH-1 ? MAX_LENGTH-1 : space));
+      unsigned int bytes = Serial.readBytesUntil(LINE_SEPARATOR, msgPtr, (space>MAX_MSG-1 ? MAX_MSG-1 : space));
       *(msgPtr+=bytes) = 0; //terminator
       lineCount++;
       msgPtr++;
@@ -86,9 +83,9 @@ void readSerial(void) {
         break;
       }
     }
-    Serial.print(lineCount);
-    Serial.print(" lines - ");
-    Serial.println(newMessage);
+//    Serial.print(lineCount);
+//    Serial.print(" lines - ");
+//    Serial.println(newMessage);
   }
   while(Serial.available()) Serial.read(); //flush buffer
 }
@@ -130,15 +127,17 @@ void loop() {
         sprintf(curMessage, "%s %i, %i", monthStr(month()), day(), year());
         break;
       case DISP_TIME: {
-        P.setIntensity(map(analogRead(A7),10,400,0,15)); //ambient brightness
+        P.setIntensity(map(analogRead(LIGHT_SENSOR),10,400,0,15)); //ambient brightness
         sprintf(curMessage, "%i:%02i %s", get12hr(), minute(), ap);
+        timer = millis();
+        mode++;
         break;
       }
       default:
-        strncpy(curMessage, nextLine, MAX_LENGTH);
+        strncpy(curMessage, nextLine, MAX_MSG-1);
         if(strlen(curMessage) > DISPLAY_WIDTH) {
           P.setTextEffect(SCROLL_LEFT, SCROLL_LEFT);
-          P.setSpeed(20);
+          P.setSpeed(scrollSpeed);
           P.setPause(0);
         } else {
           P.setTextEffect(enterEffect, exitEffect);
