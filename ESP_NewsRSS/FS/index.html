@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-type" content="text/html; charset=utf-8">
+    <title>web-scroller</title>
+    <style>
+    body{font-family:Helvetica,Arial,Sans-Serif;}
+    form{padding:5px 10px; margin:1px;}
+    a:visited{color:blue;}
+    a:hover{color:green;}
+    </style>
+	<script type="text/javascript">
+		var refreshInterval = 1000;
+		var lastDisp = 0;
+		function getStatus() {
+		  var req = new XMLHttpRequest();
+		  req.onreadystatechange = function() {
+  			if(req.readyState == 4 && req.status == 200) {
+  				var data = JSON.parse(req.responseText);
+  				document.getElementById("heap").innerHTML = data.heap;
+  				document.getElementById("refresh").innerHTML = Math.round(data.refresh/1000);
+  				var curLine = data.line-1;
+  				if(curLine < 0) {
+  					curLine = document.getElementById("titles").children.length-1;
+  				}
+  				document.getElementById("t"+lastDisp).style.fontWeight = "normal";
+  				document.getElementById("t"+curLine).style.fontWeight = "bold";
+  				lastDisp = curLine;
+  				setTimeout(getStatus, refreshInterval);
+  			}
+		  };
+		  req.ontimeout = function() {
+		    setTimeout(getStatus, refreshInterval);
+		  };
+		  req.timeout = 2000;
+		  req.open("GET", "/status", true);
+		  req.send();
+		};
+		
+		function getSettings() {
+		  var req = new XMLHttpRequest();
+		  req.onreadystatechange = function() {
+  			if(req.readyState == 4 && req.status == 200) {
+  				var data = JSON.parse(req.responseText);
+  				document.getElementById('st_ssid').value = data.ssid;
+  				document.getElementById('ap_ssid').value = data.ap;
+  				document.getElementById('int_rss').value = data.int_rss;
+  				document.getElementById('int_clk').value = data.int_clk;
+  				document.getElementById('int_disp').value = data.int_disp;
+  			}
+		  };
+		  req.open("GET", "/settings", true);
+		  req.send();
+		}
+		
+		function getTitles() {
+		  var req = new XMLHttpRequest();
+		  var list = document.getElementById('titles');
+		  list.innerHTML = "";
+		  req.onreadystatechange = function() {
+  			if(req.readyState == 4 && req.status == 200) {
+  				var data = JSON.parse(req.responseText.replace(/(?:\r\n|\r|\n)/g, '<br>'));
+  				for(i = 0; i < data.titles.length; i++) {
+  				  list.innerHTML = list.innerHTML + "<li id=\"t"+i+"\">" + data.titles[i] + "</li>"
+  				}
+  				getStatus();
+  			}
+		  };
+		  req.open("GET", "/titles", true);
+		  req.send();
+		}
+		
+		function getFeeds() {
+			var urls = document.getElementById('feeds');
+			var req = new XMLHttpRequest();
+			req.onreadystatechange = function() {
+				if(req.readyState == 4 && req.status == 200) {
+					var data = JSON.parse(req.responseText);
+					var i;
+					for(i = 0; i < data.feeds.length; i++) { 
+						urls.innerHTML = urls.innerHTML + "URL:<input name='url" + i +
+						"' size=\"80\" value='" + data.feeds[i].url + "'> Skip: " +
+						"<input name='skip" + i + "' size=\"3\" value='" + data.feeds[i].skip +
+						"'> Limit: <input name='max" + i + "' size=\"3\" value='" + 
+						data.feeds[i].limit + "'><br>"
+					}
+					if(data.feeds.length < data.max) {
+						urls.innerHTML = urls.innerHTML + "URL:<input name='url" + i +"' size=\"80\" value=''> " + 
+						"Skip: <input name='skip" + i + "' size=\"3\" value=''> " + 
+						"Limit: <input name='max" + i + "' size=\"3\" value=''>"
+					}
+				}
+			};
+			req.open("GET", "/urls", true);
+			req.send();
+		}
+
+		function init(){
+			getTitles();
+			getFeeds();
+			getSettings();
+		}
+		window.onload = init;
+	</script>
+</head>
+<body>
+    <h1>ESP8266 web-scroller</h1>
+    <h4>Actions: <a href='/?clk=1'>Update Clock</a> | <a href='/?rst=1'>Reset
+    Display</a> | <a href='/?get=1'>Get Message</a> | <a href='/?mta=1'>Get
+    Subway Status</a>&nbsp;&nbsp;RAM Free: <span id="heap"></span>B</h4>
+    Temporary Message (Max 191 chars):
+    <form action='/msg' method='post'>
+        <input name='msg' size="90"> <input type='submit'>
+    </form>
+    Currently Loaded Titles (Last refresh <span id="refresh"></span>s ago):
+    <ol id="titles"></ol>
+    Manage Feeds:
+    <form action='/feed' method='post'>
+    	<div id="feeds"></div>
+      <input type='submit'>
+    </form>
+    <hr><h2>Settings</h2>
+    Text Animation (overridden if message is too long to fit):
+    <form action='/effect'>
+        Enter:&nbsp;
+        <select name='enter'>
+            <option value="0">
+                NO_EFFECT
+            </option>
+            <option value="1">
+                PRINT
+            </option>
+            <option value="2">
+                SCROLL_UP
+            </option>
+            <option value="3" selected>
+                SCROLL_DOWN
+            </option>
+            <option value="4">
+                SCROLL_LEFT
+            </option>
+            <option value="5">
+                SCROLL_RIGHT
+            </option>
+            <option value="6">
+                SLICE
+            </option>
+            <option value="7">
+                MESH
+            </option>
+            <option value="8">
+                FADE
+            </option>
+            <option value="9">
+                DISSOLVE
+            </option>
+            <option value="10">
+                BLINDS
+            </option>
+            <option value="11">
+                WIPE
+            </option>
+            <option value="12">
+                WIPE_CURSOR
+            </option>
+            <option value="13">
+                SCAN_HORIZ
+            </option>
+            <option value="14">
+                SCAN_VERT
+            </option>
+            <option value="15">
+                OPENING
+            </option>
+            <option value="16">
+                OPENING_CURSOR
+            </option>
+            <option value="17">
+                CLOSING
+            </option>
+            <option value="18">
+                CLOSING_CURSOR
+            </option>
+            <option value="19">
+                SCROLL_UP_LEFT
+            </option>
+            <option value="20">
+                SCROLL_UP_RIGHT
+            </option>
+            <option value="21">
+                SCROLL_DOWN_LEFT
+            </option>
+            <option value="22">
+                SCROLL_DOWN_RIGHT
+            </option>
+            <option value="23">
+                GROW_UP
+            </option>
+            <option value="24">
+                GROW_DOWN
+            </option>
+        </select>
+        &nbsp;Exit:&nbsp;
+        <select name='exit'>
+            <option value="1">
+                PRINT
+            </option>
+            <option value="2">
+                SCROLL_UP
+            </option>
+            <option value="3" selected>
+                SCROLL_DOWN
+            </option>
+            <option value="4">
+                SCROLL_LEFT
+            </option>
+            <option value="5">
+                SCROLL_RIGHT
+            </option>
+            <option value="6">
+                SLICE
+            </option>
+            <option value="7">
+                MESH
+            </option>
+            <option value="8">
+                FADE
+            </option>
+            <option value="9">
+                DISSOLVE
+            </option>
+            <option value="10">
+                BLINDS
+            </option>
+            <option value="11">
+                WIPE
+            </option>
+            <option value="12">
+                WIPE_CURSOR
+            </option>
+            <option value="13">
+                SCAN_HORIZ
+            </option>
+            <option value="14">
+                SCAN_VERT
+            </option>
+            <option value="15">
+                OPENING
+            </option>
+            <option value="16">
+                OPENING_CURSOR
+            </option>
+            <option value="17">
+                CLOSING
+            </option>
+            <option value="18">
+                CLOSING_CURSOR
+            </option>
+            <option value="19">
+                SCROLL_UP_LEFT
+            </option>
+            <option value="20">
+                SCROLL_UP_RIGHT
+            </option>
+            <option value="21">
+                SCROLL_DOWN_LEFT
+            </option>
+            <option value="22">
+                SCROLL_DOWN_RIGHT
+            </option>
+            <option value="23">
+                GROW_UP
+            </option>
+            <option value="24">
+                GROW_DOWN
+            </option>
+        </select>&nbsp;
+        Speed:&nbsp;<input name='spd' size="4" type="text" value="2">&nbsp;
+        Override (Scroll) Speed:&nbsp;<input name='scr' size="4" type="text" value="20">
+        <input type="submit">
+    </form>
+    WiFi:
+    <form action='/wifi' method='post'>
+        SSID:&nbsp;<input name='st_ssid' id='st_ssid'> Password:&nbsp;<input name=
+        'st_pass' placeholder='*****' type='password' id='st_pass'> AP SSID:&nbsp;<input name=
+        'ap_ssid' id='ap_ssid'> <input type='submit'>
+    </form>
+    Intervals (ms):
+    <form action='/int'>
+        Feed:&nbsp;<input name='rss' size="9" id='int_rss'> Clock:&nbsp;<input name=
+        'time' size="9"  id='int_clk'> Display:&nbsp;<input name='disp' size="9"
+         id='int_disp'><input type='submit'>
+    </form>
+    Firmware Update:
+    <form action='/ota' enctype='multipart/form-data' method='post'>
+        <input name='update' type='file'><input type='submit'>
+    </form>
+</body>
+</html>

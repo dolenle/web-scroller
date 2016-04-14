@@ -7,6 +7,7 @@
 #include <ESP8266WiFi.h>
 #include <ESP8266HTTPClient.h>
 #include <ESP8266WebServer.h>
+#include <FS.h>
 
 #define MAX_FEEDS 5
 #define MAX_LINES 25
@@ -14,11 +15,12 @@
 #define URL_LENGTH 96
 
 char headlines[MAX_LINES][MAX_LENGTH];
-int line;
+int line, curLine;
 unsigned long rss_interval = 600000;
 unsigned long clock_interval = 3600000;
 unsigned long disp_interval = 12000;
 unsigned long lastDisp;
+bool delayIncrease = false;
 unsigned long lastUpdate = -rss_interval;
 unsigned long lastTimeSet = -clock_interval;
 char* monthTable PROGMEM = "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec";
@@ -39,17 +41,18 @@ char st_ssid[32] = "esports-league";
 char st_pass[32] = "cuesports";
 
 ESP8266WebServer server(80); //http server on port 80
+File fsUploadFile;
 
 void setup() {
   Serial.begin(115200);
   Serial1.begin(115200);
-
+  SPIFFS.begin();
   resetDisplay();
   
   WiFi.begin(st_ssid, st_pass);
   WiFi.softAP(ap_ssid);
   
-  server.on("/", pageHandler);
+  server.on("/static", pageHandler);
   server.on("/msg", msgHandler);
   server.on("/feed", feedHandler);
   server.on("/wifi", wifiHandler);
@@ -59,6 +62,23 @@ void setup() {
       server.send(200, "text/plain", (Update.hasError())?"FAIL":"OK");
       ESP.restart();
     }, otaHandler);
+  
+  server.on("/status", statusJSON);
+  server.on("/urls", urlJSON);
+  server.on("/titles", titleJSON);
+  server.on("/settings", settingsJSON);
+
+  server.on("/list", HTTP_GET, handleFileList);
+  server.on("/edit", HTTP_GET, [](){
+    if(!handleFileRead("/edit.htm")) server.send(404, "text/plain", "FileNotFound");});
+  server.on("/edit", HTTP_PUT, handleFileCreate);
+  server.on("/edit", HTTP_DELETE, handleFileDelete);
+  server.on("/edit", HTTP_POST, [](){ server.send(200, "text/plain", ""); }, handleFileUpload);
+
+  server.onNotFound([](){
+    if(!handleFileRead(server.uri()))
+      server.send(404, "text/plain", "Not Found");
+  });
   server.begin();
   
   while (WiFi.status() != WL_CONNECTED) {
@@ -72,7 +92,7 @@ void setup() {
 
 void loop() {
   server.handleClient();
-  unsigned long now=millis();
+  unsigned long now = millis();
   if(now-lastUpdate > rss_interval) {
     updateFeeds();
     loadMTAServiceStatus();
@@ -83,12 +103,20 @@ void loop() {
     lastTimeSet = now;
     Serial.println("TimeSet");
   } else {
-    static int i;
     if(now-lastDisp > disp_interval) {
-      Serial.println(headlines[i]);
-      Serial1.println(headlines[i++]);
       lastDisp=now;
-      if(i>=line) i=0;
+      Serial.println(headlines[curLine]);
+      if(strlen(headlines[curLine]) > 120 && !delayIncrease) {
+        disp_interval += 3500; //temporarily increase delay
+        delayIncrease = true;
+      } else if(delayIncrease) {
+        disp_interval -= 3500;
+        delayIncrease = false;
+      }
+      Serial1.println(headlines[curLine++]);
+      if(curLine >= line) {
+        curLine = 0;
+      }
     }
   }
 }
@@ -385,4 +413,162 @@ void otaHandler() {
   yield();
 }
 
+void urlJSON() {
+  String json = "{\"max\":";
+  json += MAX_FEEDS;
+  json += ",\"feeds\":[";
+  for(uint8_t i = 0; i < numFeeds; i++) {
+    if(i != 0) json += ",";
+    json += "{\"url\":\"";
+    json += feedURLs[i];
+    json += "\",\"skip\":"+String(feedSkip[i]);
+    json += ",\"limit\":"+String(feedLines[i]);
+    json += "}";
+  }
+  json += "]}";
+  server.send(200, "text/json", json);
+}
+
+void statusJSON() {
+  String json = "{";
+  json += "\"heap\":"+String(ESP.getFreeHeap());
+  json += ", \"line\":"+String(curLine);
+  json += ", \"refresh\":"+String(millis()-lastUpdate);
+  json += "}";
+  server.send(200, "text/json", json);
+}
+
+void titleJSON() {
+  String json = "{\"titles\":[";
+  for(int i = 0; i < line; i++) {
+    if(i != 0) json += ",";
+    String s = String(headlines[i]);
+    s.replace("\"", "\\\"");
+    json += "\"" + s + "\"";
+  }
+  json += "]}";
+  server.send(200, "text/json", json);
+}
+
+void settingsJSON() {
+  String json = "{";
+  json += "\"ssid\":\""+String(st_ssid);
+  json += "\",\"ap\":\""+String(ap_ssid);
+  json += "\",\"int_rss\":"+String(rss_interval);
+  json += ",\"int_clk\":"+String(clock_interval);
+  json += ",\"int_disp\":"+String(disp_interval);
+  json += "}";
+  server.send(200, "text/json", json);
+}
+
+///////////////////////FOR DEV PURPOSES/////////////////////////
+
+String getContentType(String filename){
+  if(server.hasArg("download")) return "application/octet-stream";
+  else if(filename.endsWith(".htm")) return "text/html";
+  else if(filename.endsWith(".html")) return "text/html";
+  else if(filename.endsWith(".css")) return "text/css";
+  else if(filename.endsWith(".js")) return "application/javascript";
+  else if(filename.endsWith(".png")) return "image/png";
+  else if(filename.endsWith(".gif")) return "image/gif";
+  else if(filename.endsWith(".jpg")) return "image/jpeg";
+  else if(filename.endsWith(".ico")) return "image/x-icon";
+  else if(filename.endsWith(".xml")) return "text/xml";
+  else if(filename.endsWith(".pdf")) return "application/x-pdf";
+  else if(filename.endsWith(".zip")) return "application/x-zip";
+  else if(filename.endsWith(".gz")) return "application/x-gzip";
+  return "text/plain";
+}
+
+bool handleFileRead(String path){
+  Serial.println("handleFileRead: " + path);
+  if(path.endsWith("/")) path += "index.htm";
+  String contentType = getContentType(path);
+  String pathWithGz = path + ".gz";
+  if(SPIFFS.exists(pathWithGz) || SPIFFS.exists(path)){
+    if(SPIFFS.exists(pathWithGz))
+      path += ".gz";
+    File file = SPIFFS.open(path, "r");
+    size_t sent = server.streamFile(file, contentType);
+    file.close();
+    return true;
+  }
+  return false;
+}
+
+void handleFileUpload(){
+  if(server.uri() != "/edit") return;
+  HTTPUpload& upload = server.upload();
+  if(upload.status == UPLOAD_FILE_START){
+    String filename = upload.filename;
+    if(!filename.startsWith("/")) filename = "/"+filename;
+    Serial.print("handleFileUpload Name: "); Serial.println(filename);
+    fsUploadFile = SPIFFS.open(filename, "w");
+    filename = String();
+  } else if(upload.status == UPLOAD_FILE_WRITE){
+    //Serial.print("handleFileUpload Data: "); Serial.println(upload.currentSize);
+    if(fsUploadFile)
+      fsUploadFile.write(upload.buf, upload.currentSize);
+  } else if(upload.status == UPLOAD_FILE_END){
+    if(fsUploadFile)
+      fsUploadFile.close();
+    Serial.print("handleFileUpload Size: "); Serial.println(upload.totalSize);
+  }
+}
+
+void handleFileDelete(){
+  if(server.args() == 0) return server.send(500, "text/plain", "BAD ARGS");
+  String path = server.arg(0);
+  Serial.println("handleFileDelete: " + path);
+  if(path == "/")
+    return server.send(500, "text/plain", "BAD PATH");
+  if(!SPIFFS.exists(path))
+    return server.send(404, "text/plain", "FileNotFound");
+  SPIFFS.remove(path);
+  server.send(200, "text/plain", "");
+  path = String();
+}
+
+void handleFileCreate(){
+  if(server.args() == 0)
+    return server.send(500, "text/plain", "BAD ARGS");
+  String path = server.arg(0);
+  Serial.println("handleFileCreate: " + path);
+  if(path == "/")
+    return server.send(500, "text/plain", "BAD PATH");
+  if(SPIFFS.exists(path))
+    return server.send(500, "text/plain", "FILE EXISTS");
+  File file = SPIFFS.open(path, "w");
+  if(file)
+    file.close();
+  else
+    return server.send(500, "text/plain", "CREATE FAILED");
+  server.send(200, "text/plain", "");
+  path = String();
+}
+
+void handleFileList() {
+  if(!server.hasArg("dir")) {server.send(500, "text/plain", "BAD ARGS"); return;}
+  
+  String path = server.arg("dir");
+  Serial.println("handleFileList: " + path);
+  Dir dir = SPIFFS.openDir(path);
+  path = String();
+
+  String output = "[";
+  while(dir.next()){
+    File entry = dir.openFile("r");
+    if (output != "[") output += ',';
+    bool isDir = false;
+    output += "{\"type\":\"";
+    output += (isDir)?"dir":"file";
+    output += "\",\"name\":\"";
+    output += String(entry.name()).substring(1);
+    output += "\"}";
+    entry.close();
+  }
+  
+  output += "]";
+  server.send(200, "text/json", output);
+}
 
