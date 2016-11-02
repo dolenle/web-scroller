@@ -16,9 +16,9 @@
 
 char headlines[MAX_LINES][MAX_LENGTH];
 int line, curLine;
-unsigned long rss_interval = 600000;
-unsigned long clock_interval = 3600000;
-unsigned long disp_interval = 12000;
+unsigned long rss_interval = 600000; //10min
+unsigned long clock_interval = 86400000; //daily
+unsigned long disp_interval = 12500; //12sec
 unsigned long lastDisp;
 bool delayIncrease = false;
 unsigned long lastUpdate = -rss_interval;
@@ -99,18 +99,21 @@ void loop() {
     loadMsg();
     lastUpdate = now;
   } else if(now-lastTimeSet > clock_interval) {
+    resetDisplay();
+    delay(2000);
     updateTime();
     lastTimeSet = now;
     Serial.println("TimeSet");
+    Serial1.println(headlines[curLine]);
   } else {
     if(now-lastDisp > disp_interval) {
       lastDisp=now;
       Serial.println(headlines[curLine]);
       if(strlen(headlines[curLine]) > 120 && !delayIncrease) {
-        disp_interval += 3500; //temporarily increase delay
+        disp_interval += 4000; //temporarily increase delay
         delayIncrease = true;
       } else if(delayIncrease) {
-        disp_interval -= 3500;
+        disp_interval -= 4000;
         delayIncrease = false;
       }
       Serial1.println(headlines[curLine++]);
@@ -293,7 +296,7 @@ void pageHandler() {
     server.sendContent(redirHeader);
     return;
   }
-  String content = "<html><head><title>web-scroller</title><style>body{font-family:Helvetica,Arial,Sans-Serif;}</style></head><body><h1>ESP8266 web-scroller</h1><h4><a href='/?clk=1'>Update Clock</a> | <a href='/?rst=1'>Reset Display</a> | <a href='/?get=1'>Get Message</a> | <a href='/?mta=1'>Get Subway Status</a></h4><form action='/msg' method='POST'>Temporary Message:<input name='msg' size=90> <input type='submit'></form>Animation:<form action='/effect'>Enter: <select name='enter'>";
+  String content = "<html><head><title>web-scroller</title><style>body{font-family:Helvetica,Arial,Sans-Serif;}</style></head><body><h1>ESP8266 web-scroller</h1><h4><a href='/static?clk=1'>Update Clock</a> | <a href='/static?rst=1'>Reset Display</a> | <a href='/static?get=1'>Get Message</a> | <a href='/static?mta=1'>Get Subway Status</a></h4><form action='/msg' method='POST'>Temporary Message:<input name='msg' size=90> <input type='submit'></form>Animation:<form action='/effect'>Enter: <select name='enter'>";
   content += effectSelect;
   content += " Exit: <select name='exit'>";
   content += effectSelect;
@@ -482,7 +485,7 @@ String getContentType(String filename){
 
 bool handleFileRead(String path){
   Serial.println("handleFileRead: " + path);
-  if(path.endsWith("/")) path += "index.htm";
+  if(path.endsWith("/")) path += "index.html";
   String contentType = getContentType(path);
   String pathWithGz = path + ".gz";
   if(SPIFFS.exists(pathWithGz) || SPIFFS.exists(path)){
